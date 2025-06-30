@@ -250,38 +250,7 @@ contract NarraLayerVault is
         emit BurnToStake(msg.sender, token, amount, receiptID); 
     }
 
-    /**
-     * @notice Clear expired stakes.
-     *
-     * @notice This function:
-     *         1. Can only be called by addresses with ADMIN_ROLE
-     *         2. Max count must be greater than 0
-     *         3. Default max count is 100
-     */
-    function _clearStaking() internal {
-        uint256 cleaned = 0;
-        while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCountToClean) {
-            Receipt storage receipt = receipts[nextToCleanReceiptID];
-            if (!receipt.cleared && block.timestamp > receipt.clearedAt) {
-                IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
-                receipt.cleared = true;
-                cleaned++;
-            }
-            nextToCleanReceiptID++;
-        }
-    }
-
-    /**
-     * @notice Clear expired stakes.
-     *
-     * @param maxCount The maximum count to clean expired stakes
-     *
-     * @notice This function:
-     *         1. Can only be called by addresses with ADMIN_ROLE
-     *         2. Max count must be greater than 0
-     *         3. Default max count is 100
-     */
-    function cleanExpiredStakes(uint256 maxCount) external override {
+    function _cleanExpiredStakes(uint256 maxCount) internal {
         uint256 cleaned = 0;
         while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCount) {
             Receipt storage receipt = receipts[nextToCleanReceiptID];
@@ -292,6 +261,16 @@ contract NarraLayerVault is
             }
             nextToCleanReceiptID++;
         }
+    }
+
+
+    
+    function cleanExpiredStakes(uint256 maxCount) external override {
+        _cleanExpiredStakes(maxCount);
+    }
+
+    function _clearStaking() internal {
+        _cleanExpiredStakes(maxCountToClean);
     }
 
 }
