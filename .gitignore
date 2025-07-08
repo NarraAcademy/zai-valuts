@@ -1,2 +1,8 @@
 # Mac files
 .DS_Store
+
+broadcast/
+
+out/
+cache/
+.env

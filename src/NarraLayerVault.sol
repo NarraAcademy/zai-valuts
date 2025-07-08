@@ -34,18 +34,16 @@ contract NarraLayerVault is
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
-
     address public rewardVaultFactory;
     address public stakingTokenAddress;
     address public rewardVault;
 
-    uint256 public cooldownTime = 7 days; // default cooldown time
-
+    uint256 public cooldownTime; // default set in initialize()
     mapping(address => uint256) public supportedTokens; // weight 精度 1e18
 
     uint256 public nextReceiptID;
     uint256 public nextToCleanReceiptID;
-    uint256 public maxCountToClean = 100;
+    uint256 public maxCountToClean; // default set in initialize()
     mapping(uint256 => Receipt) public receipts;
 
     /**
@@ -76,7 +74,12 @@ contract NarraLayerVault is
 
     event CooldownTimeUpdated(uint256 newCooldownTime);
     event SupportedTokenUpdated(address indexed token, uint256 weightPerToken);
-    event BurnToStake(address indexed user, address indexed token, uint256 amount, uint256 receiptID);
+    event BurnToStake(
+        address indexed user,
+        address indexed token,
+        uint256 amount,
+        uint256 receiptID
+    );
     event MaxCountToCleanUpdated(uint256 maxCount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -109,6 +112,20 @@ contract NarraLayerVault is
         _grantRole(ADMIN_ROLE, params.defaultAdmin);
         rewardVaultFactory = params.rewardVaultFactory;
 
+        // Set default values for proxy storage
+        cooldownTime = 7 days;
+        maxCountToClean = 100;
+    }
+
+    /**
+     * @notice Setup staking token and reward vault
+     * @dev This function can only be called by addresses with ADMIN_ROLE
+     * @dev This function will create a new staking token and a new reward vault
+     * @dev This function will set the staking token address and the reward vault address
+     * @dev This function will emit a StakingTokenCreated event
+     * @dev This function will emit a RewardVaultCreated event
+     */
+    function setupStakingToken() external override onlyRole(ADMIN_ROLE) {
         // Create new staking token
         StakingToken stakingToken = new StakingToken();
         stakingTokenAddress = address(stakingToken);
@@ -147,6 +164,12 @@ contract NarraLayerVault is
         address token,
         uint256 _weightPerToken
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "Token address cannot be zero");
+        require(
+            token != stakingTokenAddress,
+            "Cannot add staking token as supported token"
+        );
+        require(_weightPerToken > 0, "Weight must be greater than zero");
         supportedTokens[token] = _weightPerToken;
         emit SupportedTokenUpdated(token, _weightPerToken);
     }
@@ -165,6 +188,11 @@ contract NarraLayerVault is
     function removeSupportedToken(
         address token
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "Token address cannot be zero");
+        require(
+            token != stakingTokenAddress,
+            "Cannot remove staking token as supported token"
+        );
         delete supportedTokens[token];
         emit SupportedTokenUpdated(token, 0);
     }
@@ -199,13 +227,14 @@ contract NarraLayerVault is
      *         2. Max count must be greater than 0
      *         3. Default max count is 100
      */
-    function setMaxCountToClean(uint256 maxCount) external override onlyRole(ADMIN_ROLE) {
+    function setMaxCountToClean(
+        uint256 maxCount
+    ) external override onlyRole(ADMIN_ROLE) {
         require(maxCount > 0, "Max count must be greater than 0");
         maxCountToClean = maxCount;
         emit MaxCountToCleanUpdated(maxCount);
     }
 
-    
     /**
      * @notice Burn tokens to stake.
      *
@@ -224,6 +253,10 @@ contract NarraLayerVault is
      *         9. Clear expired stakes
      */
     function burnToStake(address token, uint256 amount) external override {
+        require(
+            token != stakingTokenAddress,
+            "Cannot stake the staking token itself"
+        );
         require(amount > 0, "Amount must be greater than 0");
         require(supportedTokens[token] > 0, "Unsupported token");
         // Burn token to get receipt
@@ -247,51 +280,38 @@ contract NarraLayerVault is
 
         _clearStaking();
 
-        emit BurnToStake(msg.sender, token, amount, receiptID); 
+        emit BurnToStake(msg.sender, token, amount, receiptID);
     }
 
-    /**
-     * @notice Clear expired stakes.
-     *
-     * @notice This function:
-     *         1. Can only be called by addresses with ADMIN_ROLE
-     *         2. Max count must be greater than 0
-     *         3. Default max count is 100
-     */
-    function _clearStaking() internal {
-        uint256 cleaned = 0;
-        while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCountToClean) {
-            Receipt storage receipt = receipts[nextToCleanReceiptID];
-            if (!receipt.cleared && block.timestamp > receipt.clearedAt) {
-                IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
-                receipt.cleared = true;
-                cleaned++;
-            }
-            nextToCleanReceiptID++;
-        }
-    }
-
-    /**
-     * @notice Clear expired stakes.
-     *
-     * @param maxCount The maximum count to clean expired stakes
-     *
-     * @notice This function:
-     *         1. Can only be called by addresses with ADMIN_ROLE
-     *         2. Max count must be greater than 0
-     *         3. Default max count is 100
-     */
-    function cleanExpiredStakes(uint256 maxCount) external override {
+    function _cleanExpiredStakes(uint256 maxCount) internal {
         uint256 cleaned = 0;
         while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCount) {
             Receipt storage receipt = receipts[nextToCleanReceiptID];
-            if (!receipt.cleared && block.timestamp > receipt.clearedAt) {
-                IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
+            if (receipt.cleared) {
+                // Already cleared, skip to next
+                nextToCleanReceiptID++;
+            } else if (block.timestamp > receipt.clearedAt) {
+                // Eligible for cleaning
+                IRewardVault(rewardVault).delegateWithdraw(
+                    receipt.user,
+                    receipt.receiptWeight
+                );
                 receipt.cleared = true;
                 cleaned++;
+                nextToCleanReceiptID++;
+            } else {
+                // Not yet eligible, stop here
+                break;
             }
-            nextToCleanReceiptID++;
         }
     }
 
+    function cleanExpiredStakes(uint256 maxCount) external override {
+        require(maxCount > 0, "Max count must be greater than zero");
+        _cleanExpiredStakes(maxCount);
+    }
+
+    function _clearStaking() internal {
+        _cleanExpiredStakes(maxCountToClean);
+    }
 }
