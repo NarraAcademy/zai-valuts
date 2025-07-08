@@ -39,13 +39,11 @@ contract NarraLayerVault is
     address public stakingTokenAddress;
     address public rewardVault;
 
-    uint256 public cooldownTime = 7 days; // default cooldown time
-
+    uint256 public cooldownTime; // default set in initialize()
     mapping(address => uint256) public supportedTokens; // weight 精度 1e18
-
     uint256 public nextReceiptID;
     uint256 public nextToCleanReceiptID;
-    uint256 public maxCountToClean = 100;
+    uint256 public maxCountToClean; // default set in initialize()
     mapping(uint256 => Receipt) public receipts;
 
     /**
@@ -96,10 +94,7 @@ contract NarraLayerVault is
      */
     function initialize(InitParams calldata params) public initializer {
         require(params.defaultAdmin != address(0), "Invalid admin address");
-        require(
-            params.rewardVaultFactory != address(0),
-            "Invalid factory address"
-        );
+        require(params.rewardVaultFactory != address(0), "Invalid factory address");
 
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -108,6 +103,10 @@ contract NarraLayerVault is
         _grantRole(UPGRADER_ROLE, params.defaultAdmin);
         _grantRole(ADMIN_ROLE, params.defaultAdmin);
         rewardVaultFactory = params.rewardVaultFactory;
+
+        // Set default values for proxy storage
+        cooldownTime = 7 days;
+        maxCountToClean = 100;
 
         // Create new staking token
         StakingToken stakingToken = new StakingToken();
@@ -147,6 +146,7 @@ contract NarraLayerVault is
         address token,
         uint256 _weightPerToken
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != stakingTokenAddress, "Cannot add staking token as supported token");
         supportedTokens[token] = _weightPerToken;
         emit SupportedTokenUpdated(token, _weightPerToken);
     }
@@ -165,6 +165,7 @@ contract NarraLayerVault is
     function removeSupportedToken(
         address token
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != stakingTokenAddress, "Cannot remove staking token as supported token");
         delete supportedTokens[token];
         emit SupportedTokenUpdated(token, 0);
     }
@@ -224,6 +225,7 @@ contract NarraLayerVault is
      *         9. Clear expired stakes
      */
     function burnToStake(address token, uint256 amount) external override {
+        require(token != stakingTokenAddress, "Cannot stake the staking token itself");
         require(amount > 0, "Amount must be greater than 0");
         require(supportedTokens[token] > 0, "Unsupported token");
         // Burn token to get receipt
@@ -254,17 +256,22 @@ contract NarraLayerVault is
         uint256 cleaned = 0;
         while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCount) {
             Receipt storage receipt = receipts[nextToCleanReceiptID];
-            if (!receipt.cleared && block.timestamp > receipt.clearedAt) {
+            if (receipt.cleared) {
+                // Already cleared, skip to next
+                nextToCleanReceiptID++;
+            } else if (block.timestamp > receipt.clearedAt) {
+                // Eligible for cleaning
                 IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
                 receipt.cleared = true;
                 cleaned++;
+                nextToCleanReceiptID++;
+            } else {
+                // Not yet eligible, stop here
+                break;
             }
-            nextToCleanReceiptID++;
         }
     }
 
-
-    
     function cleanExpiredStakes(uint256 maxCount) external override {
         _cleanExpiredStakes(maxCount);
     }
