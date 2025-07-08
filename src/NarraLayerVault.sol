@@ -164,10 +164,12 @@ contract NarraLayerVault is
         address token,
         uint256 _weightPerToken
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "Token address cannot be zero");
         require(
             token != stakingTokenAddress,
             "Cannot add staking token as supported token"
         );
+        require(_weightPerToken > 0, "Weight must be greater than zero");
         supportedTokens[token] = _weightPerToken;
         emit SupportedTokenUpdated(token, _weightPerToken);
     }
@@ -186,6 +188,7 @@ contract NarraLayerVault is
     function removeSupportedToken(
         address token
     ) external override onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "Token address cannot be zero");
         require(
             token != stakingTokenAddress,
             "Cannot remove staking token as supported token"
@@ -304,6 +307,7 @@ contract NarraLayerVault is
     }
 
     function cleanExpiredStakes(uint256 maxCount) external override {
+        require(maxCount > 0, "Max count must be greater than zero");
         _cleanExpiredStakes(maxCount);
     }
 
