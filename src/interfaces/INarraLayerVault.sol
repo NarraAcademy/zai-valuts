@@ -19,7 +19,7 @@ interface INarraLayerVault {
     function removeSupportedToken(address token) external;
 
     /**
-     * @notice Set cooldown time for staking    
+     * @notice Set cooldown time for staking
      * @param duration Cooldown duration in seconds
      */
     function setCooldownTime(uint256 duration) external;
@@ -43,4 +43,14 @@ interface INarraLayerVault {
      * @param amount The amount of tokens to burn
      */
     function burnToStake(address token, uint256 amount) external;
+
+    /**
+     * @notice Setup staking token and reward vault
+     * @dev This function can only be called by addresses with ADMIN_ROLE
+     * @dev This function will create a new staking token and a new reward vault
+     * @dev This function will set the staking token address and the reward vault address
+     * @dev This function will emit a StakingTokenCreated event
+     * @dev This function will emit a RewardVaultCreated event
+     */
+    function setupStakingToken() external;
 }

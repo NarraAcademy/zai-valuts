@@ -34,7 +34,6 @@ contract NarraLayerVault is
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
-
     address public rewardVaultFactory;
     address public stakingTokenAddress;
     address public rewardVault;
@@ -76,7 +75,12 @@ contract NarraLayerVault is
 
     event CooldownTimeUpdated(uint256 newCooldownTime);
     event SupportedTokenUpdated(address indexed token, uint256 weightPerToken);
-    event BurnToStake(address indexed user, address indexed token, uint256 amount, uint256 receiptID);
+    event BurnToStake(
+        address indexed user,
+        address indexed token,
+        uint256 amount,
+        uint256 receiptID
+    );
     event MaxCountToCleanUpdated(uint256 maxCount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -108,7 +112,17 @@ contract NarraLayerVault is
         _grantRole(UPGRADER_ROLE, params.defaultAdmin);
         _grantRole(ADMIN_ROLE, params.defaultAdmin);
         rewardVaultFactory = params.rewardVaultFactory;
+    }
 
+    /**
+     * @notice Setup staking token and reward vault
+     * @dev This function can only be called by addresses with ADMIN_ROLE
+     * @dev This function will create a new staking token and a new reward vault
+     * @dev This function will set the staking token address and the reward vault address
+     * @dev This function will emit a StakingTokenCreated event
+     * @dev This function will emit a RewardVaultCreated event
+     */
+    function setupStakingToken() external override onlyRole(ADMIN_ROLE) {
         // Create new staking token
         StakingToken stakingToken = new StakingToken();
         stakingTokenAddress = address(stakingToken);
@@ -199,13 +213,14 @@ contract NarraLayerVault is
      *         2. Max count must be greater than 0
      *         3. Default max count is 100
      */
-    function setMaxCountToClean(uint256 maxCount) external override onlyRole(ADMIN_ROLE) {
+    function setMaxCountToClean(
+        uint256 maxCount
+    ) external override onlyRole(ADMIN_ROLE) {
         require(maxCount > 0, "Max count must be greater than 0");
         maxCountToClean = maxCount;
         emit MaxCountToCleanUpdated(maxCount);
     }
 
-    
     /**
      * @notice Burn tokens to stake.
      *
@@ -247,7 +262,7 @@ contract NarraLayerVault is
 
         _clearStaking();
 
-        emit BurnToStake(msg.sender, token, amount, receiptID); 
+        emit BurnToStake(msg.sender, token, amount, receiptID);
     }
 
     function _cleanExpiredStakes(uint256 maxCount) internal {
@@ -255,7 +270,10 @@ contract NarraLayerVault is
         while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCount) {
             Receipt storage receipt = receipts[nextToCleanReceiptID];
             if (!receipt.cleared && block.timestamp > receipt.clearedAt) {
-                IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
+                IRewardVault(rewardVault).delegateWithdraw(
+                    receipt.user,
+                    receipt.receiptWeight
+                );
                 receipt.cleared = true;
                 cleaned++;
             }
@@ -263,8 +281,6 @@ contract NarraLayerVault is
         }
     }
 
-
-    
     function cleanExpiredStakes(uint256 maxCount) external override {
         _cleanExpiredStakes(maxCount);
     }
@@ -272,5 +288,4 @@ contract NarraLayerVault is
     function _clearStaking() internal {
         _cleanExpiredStakes(maxCountToClean);
     }
-
 }
