@@ -62,7 +62,7 @@ interface IPOLErrors is IStakingRewardsErrors {
     // Signature: 0xc1abde53
     error InvalidCommissionChangeDelay();
 
-    /*                   BLOCK REWARD CONTROLLLER                  */
+    /*                   BLOCK REWARD CONTROLLER                  */
 
     // Signature: 0x2e2dab43
     error InvalidBaseRate();

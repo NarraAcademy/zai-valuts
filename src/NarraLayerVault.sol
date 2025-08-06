@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IRewardVaultFactory.sol";
 import "./interfaces/IRewardVault.sol";
 import "./token/StakingToken.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 
 /**
  * @title NarraLayerVault
@@ -21,13 +22,13 @@ import "./token/StakingToken.sol";
  *         1. Burn supported tokens to receive receipts
  *         2. Claim rewards after cooldown period
  *         3. Admin can manage supported tokens and cooldown time
- *         4. Admin can unstake tokens in emergency
  */
 contract NarraLayerVault is
     INarraLayerVault,
     Initializable,
     UUPSUpgradeable,
-    AccessControlUpgradeable
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable
 {
     using SafeERC20 for IERC20;
 
@@ -39,7 +40,7 @@ contract NarraLayerVault is
     address public rewardVault;
 
     uint256 public cooldownTime; // default set in initialize()
-    mapping(address => uint256) public supportedTokens; // weight 精度 1e18
+    mapping(address => uint256) public supportedTokens; // weight per token
 
     uint256 public nextReceiptID;
     uint256 public nextToCleanReceiptID;
@@ -82,6 +83,9 @@ contract NarraLayerVault is
     );
     event MaxCountToCleanUpdated(uint256 maxCount);
 
+    event ReceiptClaimed(address indexed user, uint256 indexed receiptID);
+    event StakingTokenCreated(address stakingToken);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -106,6 +110,7 @@ contract NarraLayerVault is
 
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, params.defaultAdmin);
         _grantRole(UPGRADER_ROLE, params.defaultAdmin);
@@ -129,6 +134,7 @@ contract NarraLayerVault is
         // Create new staking token
         StakingToken stakingToken = new StakingToken();
         stakingTokenAddress = address(stakingToken);
+        emit StakingTokenCreated(stakingTokenAddress);
 
         // Create vault for newly created token
         address vaultAddress = IRewardVaultFactory(rewardVaultFactory)
@@ -150,8 +156,8 @@ contract NarraLayerVault is
     /**
      * @notice Update the weight per token for a supported token.
      *
-     * @param token The address of the token to update (must be a valid ERC20 token)
-     * @param _weightPerToken The new weight per token (multiplied by 1e4, e.g., 10000 = 1.0)
+     * @param token The address of the token to update
+     * @param _weightPerToken The new weight per token
      *
      * @notice This function:
      *         1. Can only be called by addresses with ADMIN_ROLE
@@ -175,7 +181,7 @@ contract NarraLayerVault is
     }
 
     /**
-     * @notice Remove a token from the list of supported tokens.
+     * @notice Remove a token from the list of supported tokens. implement this function when this erc20 token violates certain rules
      *
      * @param token The address of the token to remove
      *
@@ -242,7 +248,6 @@ contract NarraLayerVault is
      * @param amount The amount of tokens to burn
      *
      * @notice This function:
-     *         1. Can only be called by addresses with ADMIN_ROLE
      *         2. Amount must be greater than 0
      *         3. Token must be supported
      *         4. Burn token to get receipt
@@ -252,11 +257,8 @@ contract NarraLayerVault is
      *         8. Create receipt record
      *         9. Clear expired stakes
      */
-    function burnToStake(address token, uint256 amount) external override {
-        require(
-            token != stakingTokenAddress,
-            "Cannot stake the staking token itself"
-        );
+    function burnToStake(address token, uint256 amount) external override nonReentrant {
+        require(token != stakingTokenAddress, "Cannot stake the staking token itself");
         require(amount > 0, "Amount must be greater than 0");
         require(supportedTokens[token] > 0, "Unsupported token");
         // Burn token to get receipt
@@ -284,6 +286,7 @@ contract NarraLayerVault is
     }
 
     function _cleanExpiredStakes(uint256 maxCount) internal {
+        require(maxCount <= maxCountToClean, "Max count must be less than or equal to max count to clean");
         uint256 cleaned = 0;
         while (nextToCleanReceiptID < nextReceiptID && cleaned < maxCount) {
             Receipt storage receipt = receipts[nextToCleanReceiptID];
@@ -297,6 +300,7 @@ contract NarraLayerVault is
                     receipt.receiptWeight
                 );
                 receipt.cleared = true;
+                emit ReceiptClaimed(receipt.user, nextToCleanReceiptID);
                 cleaned++;
                 nextToCleanReceiptID++;
             } else {
@@ -306,7 +310,7 @@ contract NarraLayerVault is
         }
     }
 
-    function cleanExpiredStakes(uint256 maxCount) external override {
+    function cleanExpiredStakes(uint256 maxCount) external override nonReentrant {
         require(maxCount > 0, "Max count must be greater than zero");
         _cleanExpiredStakes(maxCount);
     }
@@ -314,4 +318,16 @@ contract NarraLayerVault is
     function _clearStaking() internal {
         _cleanExpiredStakes(maxCountToClean);
     }
+
+    function claimReceipt(uint256 receiptID) external nonReentrant {
+        Receipt storage receipt = receipts[receiptID];
+        require(!receipt.cleared, "Already cleared");
+        require(receipt.user == msg.sender, "Not receipt owner");
+        require(block.timestamp > receipt.clearedAt, "Cooldown not passed");
+
+        IRewardVault(rewardVault).delegateWithdraw(receipt.user, receipt.receiptWeight);
+        receipt.cleared = true;
+        emit ReceiptClaimed(msg.sender, receiptID);
+    }
+
 }
